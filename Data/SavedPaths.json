@@ -1,0 +1,10 @@
+{
+    "PYTESSERACT_PATH": "E:\\Programy\\pdfreader\\tesseract.exe",
+    "POPPLER_PATH": "E:\\Programy\\poppler-24.08.0\\Library\\bin",
+    "Email": {
+        "provider": "gmail",
+        "email": "kintesting988@gmail.com",
+        "password": "owic imna msiz mgzw",
+        "imap_server": "imap.gmail.com"
+    }
+}
