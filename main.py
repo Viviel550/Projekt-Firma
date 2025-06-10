@@ -5,6 +5,7 @@ import os
 import sys
 import argparse
 import json
+import pandas as pd
 from datetime import datetime
 import logging
 from typing import List, Dict, Any
@@ -14,12 +15,35 @@ current_dir = os.path.dirname(os.path.abspath(__file__))
 if current_dir not in sys.path:
     sys.path.insert(0, current_dir)
 
-# Importuj moduły bezpośrednio
+# Importuj moduły z nowej struktury
 try:
-    # Bezpośredni import zamiast z modułu
-    from pdf_email_extractor import EnhancedDataExtractor
-    import config
-    from config import *
+    # Import from modular structure
+    from extractor import EnhancedDataExtractor
+    from data_validator import DataValidator
+    
+    # Try to import config, create default if missing
+    try:
+        import config
+        from config import *
+    except ImportError:
+        print("Warning: config.py not found, using default settings...")
+        # Default settings
+        INPUT_PDF_DIR = "pdfs"
+        OUTPUT_DIR = "output"
+        OUTPUT_EXCEL_FILE = "extracted_data.xlsx"
+        LOGGING_CONFIG = {
+            'level': 'INFO',
+            'log_file': 'logs/extractor.log',
+            'log_format': '%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+        }
+        PERFORMANCE_SETTINGS = {
+            'max_pdf_size_mb': 50
+        }
+        # Create directories
+        for directory in [INPUT_PDF_DIR, OUTPUT_DIR, "logs"]:
+            if not os.path.exists(directory):
+                os.makedirs(directory)
+                
 except ImportError as e:
     print(f"Błąd importu: {e}")
     print("Upewnij się, że wszystkie wymagane pliki znajdują się w katalogu projektu.")
@@ -49,6 +73,7 @@ class ExtractorManager:
     def __init__(self):
         self.logger = setup_logging()
         self.extractor = EnhancedDataExtractor()
+        self.validator = DataValidator()
         self.stats = {
             'processed_files': 0,
             'successful_extractions': 0,
@@ -73,8 +98,8 @@ class ExtractorManager:
             extracted_data['source_file'] = os.path.basename(file_path)
             extracted_data['file_size_mb'] = file_size_mb
             
-            # Walidacja danych
-            validation_result = self.validate_extracted_data(extracted_data)
+            # Walidacja danych za pomocą DataValidator
+            validation_result = self.validator.validate_extracted_data(extracted_data)
             extracted_data['validation'] = validation_result
             
             self.stats['successful_extractions'] += 1
@@ -116,70 +141,27 @@ class ExtractorManager:
         
         return all_data
     
-    def validate_extracted_data(self, data: Dict[str, Any]) -> Dict[str, Any]:
-        """Waliduje wyekstraktowane dane"""
-        validation_result = {
-            'is_valid': True,
-            'errors': [],
-            'warnings': [],
-            'missing_required_fields': []
-        }
-        
-        # Sprawdź wymagane pola
-        for field in FIELD_PRIORITIES['required_fields']:
-            if not data.get(field):
-                validation_result['missing_required_fields'].append(field)
-                validation_result['errors'].append(f"Brak wymaganego pola: {field}")
-        
-        # Walidacja formatu
-        if data.get('shipping_postcode'):
-            if not self._validate_postcode(data['shipping_postcode']):
-                validation_result['errors'].append("Nieprawidłowy format kodu pocztowego")
-        
-        if data.get('material_code'):
-            if not self._validate_ppg_code(data['material_code']):
-                validation_result['warnings'].append("Kod materiału nie pasuje do wzorca PPG")
-        
-        # Sprawdź obecność kluczowych słów
-        if data.get('material_description'):
-            has_keywords = any(keyword in data['material_description'] 
-                             for keyword in VALIDATION_RULES['required_material_keywords'])
-            if not has_keywords:
-                validation_result['warnings'].append("Brak kluczowych słów w opisie materiału")
-        
-        if validation_result['errors']:
-            validation_result['is_valid'] = False
-        
-        return validation_result
-    
-    def _validate_postcode(self, postcode: str) -> bool:
-        """Waliduje format kodu pocztowego"""
-        import re
-        return bool(re.match(VALIDATION_RULES['postcode_format'], postcode.strip()))
-    
-    def _validate_ppg_code(self, code: str) -> bool:
-        """Waliduje format kodu PPG"""
-        import re
-        return bool(re.match(VALIDATION_RULES['ppg_code_format'], code.strip()))
-    
     def process_emails(self, email_config: Dict[str, str]) -> List[Dict[str, Any]]:
-        """Przetwarza emaile z serwera IMAP"""
-        self.logger.info("Rozpoczynam przetwarzanie emaili")
+        """Przetwarza tylko nieprzeczytane emaile z serwera IMAP i oznacza je jako przeczytane"""
+        self.logger.info("Rozpoczynam przetwarzanie nieprzeczytanych emaili")
         
         try:
+            # Update the call to specify unread_only=True
             emails_data = self.extractor.read_emails_from_imap(
                 server=email_config['server'],
                 username=email_config['username'],
                 password=email_config['password'],
-                folder=email_config.get('folder', 'INBOX')
+                folder=email_config.get('folder', 'INBOX'),
+                unread_only=True,  # Only process unread emails
+                mark_as_read=True  # Mark emails as read after processing
             )
             
             # Walidacja danych z emaili
             for email_data in emails_data:
-                validation_result = self.validate_extracted_data(email_data)
+                validation_result = self.validator.validate_extracted_data(email_data)
                 email_data['validation'] = validation_result
             
-            self.logger.info(f"Przetworzono {len(emails_data)} emaili")
+            self.logger.info(f"Przetworzono {len(emails_data)} nieprzeczytanych emaili")
             return emails_data
             
         except Exception as e:
@@ -194,7 +176,7 @@ class ExtractorManager:
             if output_dir and not os.path.exists(output_dir):
                 os.makedirs(output_dir)
             
-            # Zapisz dane
+            # Zapisz dane używając metody z ExtractorManager
             success = self.extractor.save_to_excel(data, output_file)
             
             if success:
@@ -211,9 +193,6 @@ class ExtractorManager:
     def add_statistics_sheet(self, excel_file: str, data: List[Dict[str, Any]]):
         """Dodaje arkusz ze statystykami"""
         try:
-            import pandas as pd
-            from openpyxl import load_workbook
-            
             # Przygotuj statystyki
             total_records = len(data)
             valid_records = sum(1 for d in data if d.get('validation', {}).get('is_valid', True))
@@ -241,28 +220,18 @@ class ExtractorManager:
             }
             
             # Dodaj arkusz statystyk
-            with pd.ExcelWriter(excel_file, engine='openpyxl', mode='a') as writer:
-                pd.DataFrame(stats_data).to_excel(writer, sheet_name='Statystyki', index=False)
+            try:
+                with pd.ExcelWriter(excel_file, engine='openpyxl', mode='a') as writer:
+                    pd.DataFrame(stats_data).to_excel(writer, sheet_name='Statystyki', index=False)
+            except Exception as e:
+                self.logger.warning(f"Nie udało się dodać arkusza statystyk: {str(e)}")
             
         except Exception as e:
             self.logger.error(f"Błąd dodawania arkusza statystyk: {str(e)}")
     
     def export_to_json(self, data: List[Dict[str, Any]], output_file: str) -> bool:
         """Eksportuje dane do JSON"""
-        try:
-            output_dir = os.path.dirname(output_file)
-            if output_dir and not os.path.exists(output_dir):
-                os.makedirs(output_dir)
-            
-            with open(output_file, 'w', encoding='utf-8') as f:
-                json.dump(data, f, ensure_ascii=False, indent=2, default=str)
-            
-            self.logger.info(f"Dane wyeksportowane do JSON: {output_file}")
-            return True
-            
-        except Exception as e:
-            self.logger.error(f"Błąd eksportu do JSON: {str(e)}")
-            return False
+        return self.extractor.export_to_json(data, output_file)
     
     def generate_report(self, data: List[Dict[str, Any]]) -> str:
         """Generuje raport z przetwarzania"""
@@ -346,11 +315,14 @@ def interactive_mode():
         print("1. Przetwarzaj pliki PDF z katalogu")
         print("2. Przetwarzaj pojedynczy plik PDF")
         print("3. Przetwarzaj emaile")
-        print("4. Trenuj model ML")
-        print("5. Pokaż statystyki")
-        print("6. Wyjście")
+        print("4. Przetwarzaj pojedynczy email (tekst)")
+        print("5. Trenuj model ML")
+        print("6. Eksportuj dane do JSON")
+        print("7. Ewaluacja jakości ekstrakcji")
+        print("8. Pokaż statystyki")
+        print("9. Wyjście")
         
-        choice = input("\nWybierz opcję (1-6): ").strip()
+        choice = input("\nWybierz opcję (1-9): ").strip()
         
         if choice == '1':
             input_dir = input(f"Katalog wejściowy (domyślnie {INPUT_PDF_DIR}): ") or INPUT_PDF_DIR
@@ -381,24 +353,271 @@ def interactive_mode():
                 output_path = os.path.join(OUTPUT_DIR, f"emails_{datetime.now().strftime('%Y%m%d_%H%M%S')}.xlsx")
                 if manager.export_to_excel(data, output_path):
                     print(f"\n✓ Emaile przetworzone. Wyniki w: {output_path}")
+                    
+                    # Pokaż dodatkowe statystyki dla emaili
+                    total_items = 0
+                    for email_data in data:
+                        if email_data.get('material_descriptions_list'):
+                            total_items += len(email_data['material_descriptions_list'])
+                        else:
+                            total_items += 1
+                    print(f"Łączna liczba pozycji w Excel: {total_items}")
         
         elif choice == '4':
-            manager.extractor.train_model()
-            print("\n✓ Model ML został wytrenowany")
+            # Przetwarzanie pojedynczego emaila z pliku tekstowego
+            txt_path = input("Podaj ścieżkę do pliku tekstowego z emailem: ").strip()
+            
+            if not txt_path:
+                print("Nie podano ścieżki do pliku")
+                continue
+            
+            if not os.path.exists(txt_path):
+                print(f"Plik nie istnieje: {txt_path}")
+                continue
+            
+            try:
+                # Wczytaj treść z pliku tekstowego
+                with open(txt_path, 'r', encoding='utf-8') as f:
+                    email_content = f.read()
+                
+                if not email_content.strip():
+                    print("Plik jest pusty")
+                    continue
+                
+                print(f"Wczytano treść emaila z pliku: {txt_path}")
+                print(f"Długość tekstu: {len(email_content)} znaków")
+                
+                # Użyj nowego modułu extractor
+                extracted_data = manager.extractor.extract_from_email(email_content)
+                extracted_data['source_file'] = os.path.basename(txt_path)
+                
+                # Walidacja danych z użyciem DataValidator
+                validation_result = manager.validator.validate_extracted_data(extracted_data)
+                extracted_data['validation'] = validation_result
+                
+                # Pokaż statystyki jakości
+                quality = manager.validator.evaluate_quality(extracted_data)
+                print(f"\nJakość ekstrakcji:")
+                print(f"- Kompletność: {quality['completeness']*100:.1f}%")
+                print(f"- Średnia pewność: {quality['confidence']*100:.1f}%")
+                print(f"- Wszystkie wymagane pola: {'Tak' if quality['required_fields_present'] else 'Nie'}")
+                
+                if quality['warnings']:
+                    print("Ostrzeżenia:")
+                    for warning in quality['warnings']:
+                        print(f"  - {warning}")
+                
+                if validation_result['errors']:
+                    print("Błędy walidacji:")
+                    for error in validation_result['errors']:
+                        print(f"  - {error}")
+                
+                # Zapisz do Excel
+                timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
+                output_path = os.path.join(OUTPUT_DIR, f"email_from_file_{timestamp}.xlsx")
+                
+                if manager.export_to_excel([extracted_data], output_path):
+                    print(f"\n✓ Przetwarzanie zakończone. Wyniki zapisane w: {output_path}")
+                    
+                    # Pokaż ile wierszy zostanie utworzonych
+                    if extracted_data.get('material_descriptions_list'):
+                        print(f"Utworzono {len(extracted_data['material_descriptions_list'])} wierszy dla pozycji materiałów")
+                    else:
+                        print("Utworzono 1 wiersz")
+                else:
+                    print("Błąd podczas przetwarzania")
+                    
+                # Pokaż wyekstrahowane dane
+                print("\n=== WYEKSTRAHOWANE DANE ===")
+                for key, value in extracted_data.items():
+                    if key not in ['order_items', 'material_descriptions_list', 'validation']:
+                        print(f"{key}: {value}")
+                
+                if extracted_data.get('material_descriptions_list'):
+                    print(f"\nZnalezione materiały ({len(extracted_data['material_descriptions_list'])}):")
+                    for i, desc in enumerate(extracted_data['material_descriptions_list'], 1):
+                        print(f"  {i}. {desc}")
+                        
+                # Opcjonalnie pokaż fragment oryginalnego tekstu
+                preview_choice = input("\nCzy chcesz zobaczyć fragment oryginalnego tekstu? (t/n): ").strip().lower()
+                if preview_choice == 't':
+                    preview_length = min(500, len(email_content))
+                    print(f"\nFragment tekstu (pierwsze {preview_length} znaków):")
+                    print("-" * 50)
+                    print(email_content[:preview_length])
+                    if len(email_content) > preview_length:
+                        print("...")
+                    print("-" * 50)
+            
+            except UnicodeDecodeError:
+                print("Błąd dekodowania pliku. Spróbuj z innym kodowaniem.")
+                try:
+                    with open(txt_path, 'r', encoding='latin-1') as f:
+                        email_content = f.read()
+                    print("Pomyślnie wczytano plik z kodowaniem latin-1")
+                    # Continue with processing...
+                except Exception as e:
+                    print(f"Nie udało się wczytać pliku: {str(e)}")
+            
+            except Exception as e:
+                print(f"Błąd podczas wczytywania pliku: {str(e)}")
         
         elif choice == '5':
-            print(f"\n=== STATYSTYKI ===")
+            print("Trenowanie modelu ML...")
+            try:
+                # Access the traditional extractor for training
+                if hasattr(manager.extractor, 'traditional_extractor'):
+                    manager.extractor.traditional_extractor.train_model()
+                    print("\n✓ Model ML został wytrenowany i zapisany")
+                else:
+                    print("Model ML nie jest dostępny w obecnej konfiguracji")
+            except Exception as e:
+                print(f"Błąd podczas trenowania modelu: {str(e)}")
+        
+        elif choice == '6':
+            # Eksport do JSON
+            print("Dostępne pliki Excel:")
+            excel_files = []
+            if os.path.exists(OUTPUT_DIR):
+                for file in os.listdir(OUTPUT_DIR):
+                    if file.endswith('.xlsx'):
+                        excel_files.append(file)
+                        print(f"{len(excel_files)}. {file}")
+            
+            if excel_files:
+                try:
+                    file_choice = input("Wybierz numer pliku lub podaj pełną ścieżkę: ").strip()
+                    
+                    if file_choice.isdigit() and 1 <= int(file_choice) <= len(excel_files):
+                        excel_file = os.path.join(OUTPUT_DIR, excel_files[int(file_choice) - 1])
+                    else:
+                        excel_file = file_choice
+                    
+                    if os.path.exists(excel_file):
+                        json_file = excel_file.replace('.xlsx', '.json')
+                        
+                        # Wczytaj dane z Excel i zapisz jako JSON
+                        df = pd.read_excel(excel_file)
+                        data_list = df.to_dict('records')
+                        
+                        if manager.export_to_json(data_list, json_file):
+                            print(f"\n✓ Dane zostały wyeksportowane do: {json_file}")
+                        else:
+                            print("Błąd podczas eksportu do JSON")
+                    else:
+                        print("Plik nie istnieje")
+                except Exception as e:
+                    print(f"Błąd podczas eksportu: {str(e)}")
+            else:
+                print("Brak plików Excel do eksportu")
+        
+        elif choice == '7':
+            # Ewaluacja jakości ekstrakcji
+            print("Wybierz opcję ewaluacji:")
+            print("1. Ewaluacja pliku PDF")
+            print("2. Ewaluacja tekstu emaila")
+            
+            eval_choice = input("Wybierz opcję (1-2): ").strip()
+            
+            if eval_choice == '1':
+                pdf_path = input("Podaj ścieżkę do pliku PDF: ").strip()
+                if os.path.exists(pdf_path):
+                    print(f"Ewaluacja jakości ekstrakcji dla: {pdf_path}")
+                    extracted_data = manager.extractor.extract_from_pdf(pdf_path)
+                    
+                    # Walidacja z DataValidator
+                    validation_result = manager.validator.validate_extracted_data(extracted_data)
+                    extracted_data['validation'] = validation_result
+                    
+                    quality = manager.validator.evaluate_quality(extracted_data)
+                    
+                    print("\n=== STATYSTYKI JAKOŚCI EKSTRAKCJI ===")
+                    print(f"Kompletność: {quality['completeness']*100:.1f}%")
+                    print(f"Średnia pewność: {quality['confidence']*100:.1f}%")
+                    print(f"Wszystkie wymagane pola: {'Tak' if quality['required_fields_present'] else 'Nie'}")
+                    
+                    if quality['warnings']:
+                        print("\nOstrzeżenia:")
+                        for warning in quality['warnings']:
+                            print(f"  - {warning}")
+                    
+                    if validation_result['errors']:
+                        print("\nBłędy walidacji:")
+                        for error in validation_result['errors']:
+                            print(f"  - {error}")
+                    
+                    # Pokaż wyekstrahowane dane
+                    print("\n=== WYEKSTRAHOWANE DANE ===")
+                    for key, value in extracted_data.items():
+                        if key not in ['order_items', 'validation'] and isinstance(value, (str, int, float, bool)):
+                            print(f"{key}: {value}")
+                else:
+                    print("Plik nie istnieje")
+            
+            elif eval_choice == '2':
+                print("Wklej treść emaila (zakończ wpisując 'END' w nowej linii):")
+                email_lines = []
+                while True:
+                    line = input()
+                    if line.strip().upper() == "END":
+                        break
+                    email_lines.append(line)
+                
+                email_content = "\n".join(email_lines)
+                
+                if email_content.strip():
+                    extracted_data = manager.extractor.extract_from_email(email_content)
+                    validation_result = manager.validator.validate_extracted_data(extracted_data)
+                    
+                    quality = manager.validator.evaluate_quality(extracted_data)
+                    
+                    print("\n=== STATYSTYKI JAKOŚCI EKSTRAKCJI EMAILA ===")
+                    print(f"Typ dokumentu: {extracted_data.get('email_type', 'unknown')}")
+                    print(f"Kompletność: {quality['completeness']*100:.1f}%")
+                    print(f"Średnia pewność: {quality['confidence']*100:.1f}%")
+                    print(f"Wszystkie wymagane pola: {'Tak' if quality['required_fields_present'] else 'Nie'}")
+                    
+                    if quality['warnings']:
+                        print("\nOstrzeżenia:")
+                        for warning in quality['warnings']:
+                            print(f"  - {warning}")
+                    
+                    print("\n=== WYEKSTRAHOWANE DANE ===")
+                    for key, value in extracted_data.items():
+                        if key not in ['order_items', 'material_descriptions_list']:
+                            print(f"{key}: {value}")
+                    
+                    if extracted_data.get('material_descriptions_list'):
+                        print(f"\nZnalezione materiały ({len(extracted_data['material_descriptions_list'])}):")
+                        for i, desc in enumerate(extracted_data['material_descriptions_list'], 1):
+                            print(f"  {i}. {desc}")
+                else:
+                    print("Brak treści emaila")
+        
+        elif choice == '8':
+            print(f"\n=== STATYSTYKI SESJI ===")
             print(f"Przetworzone pliki: {manager.stats['processed_files']}")
             print(f"Udane ekstrakcje: {manager.stats['successful_extractions']}")
             print(f"Nieudane ekstrakcje: {manager.stats['failed_extractions']}")
             print(f"Czas działania: {datetime.now() - manager.stats['start_time']}")
+            
+            # Sprawdź dostępne pliki wynikowe
+            if os.path.exists(OUTPUT_DIR):
+                output_files = [f for f in os.listdir(OUTPUT_DIR) if f.endswith(('.xlsx', '.json'))]
+                if output_files:
+                    print(f"\nDostępne pliki wynikowe ({len(output_files)}):")
+                    for file in sorted(output_files):
+                        file_path = os.path.join(OUTPUT_DIR, file)
+                        file_size = os.path.getsize(file_path) / 1024  # KB
+                        mod_time = datetime.fromtimestamp(os.path.getmtime(file_path))
+                        print(f"  - {file} ({file_size:.1f} KB, {mod_time.strftime('%Y-%m-%d %H:%M')})")
         
-        elif choice == '6':
+        elif choice == '9':
             print("Do widzenia!")
             break
         
         else:
-            print("Nieprawidłowy wybór!")
+            print("Nieprawidłowy wybór! Wybierz opcję od 1 do 9.")
 
 def main():
     """Główna funkcja programu"""

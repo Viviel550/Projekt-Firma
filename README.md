@@ -1,4 +1,3 @@
-# CUMPYTHON
 # PDF i Email Data Extractor
 
 Narzędzie do automatycznej ekstrakcji danych z plików PDF i wiadomości email do arkuszy Excel, z funkcją klasyfikacji i analizy zawartości przy pomocy ML.
@@ -70,9 +69,12 @@ Program wyświetli menu z dostępnymi opcjami:
 1. Przetwarzaj pliki PDF z katalogu
 2. Przetwarzaj pojedynczy plik PDF
 3. Przetwarzaj emaile
-4. Trenuj model ML
-5. Pokaż statystyki
-6. Wyjście
+4. Przetwarzaj pojedynczy email (tekst)
+5. Trenuj model ML
+6. Eksportuj dane do JSON (nie testowane)
+7. Ewaluacja jakości ekstrakcji (nie testowane)
+8. Pokaż statystyki
+9. Wyjście
 
 ### Tryb wiersza poleceń
 
