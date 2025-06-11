@@ -1,12 +1,6 @@
-# PDF i Email Data Extractor
+# Automatyzacja Przyjmowania zamówień
 
 Narzędzie do automatycznej ekstrakcji danych z plików PDF i wiadomości email do arkuszy Excel, z funkcją klasyfikacji i analizy zawartości przy pomocy ML.
-
-## 📋 Opis
-
-PDF i Email Data Extractor to zaawansowane narzędzie stworzone do automatyzacji procesu wydobywania istotnych danych biznesowych (takich jak dane klientów, numery zamówień, kody materiałów, itp.) z plików PDF oraz wiadomości email. Program wykrywa i wyodrębnia dane zgodnie z określonymi wzorcami, a następnie zapisuje je w ustrukturyzowanym formacie Excel lub JSON.
-
-Narzędzie jest szczególnie przydatne dla firm handlujących materiałami budowlanymi, farbami i produktami PPG, gdzie wiele zamówień i dokumentów przychodzi w formie plików PDF lub wiadomości email od klientów z Holandii i Polski.
 
 ## ✨ Funkcje
 
