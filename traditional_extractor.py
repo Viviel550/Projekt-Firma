@@ -151,14 +151,20 @@ class TraditionalExtractor:
                     if match_val:
                         extracted_data[field] = match_val.strip()
                 elif field == 'quantity':
-                    # Handle tuple matches for quantity
-                    match = matches[0]
-                    if isinstance(match, tuple):
-                        match_val = next((group for group in match if group), '')
-                    else:
-                        match_val = match
-                    if match_val:
-                        extracted_data[field] = match_val.strip()
+                    # Handle multiple quantities like material_code and colour_code
+                    all_matches = []
+                    for match in matches:
+                        if isinstance(match, tuple):
+                            match_val = next((group for group in match if group), '')
+                        else:
+                            match_val = match
+                        if match_val:
+                            all_matches.append(match_val.strip())
+                    
+                    if all_matches:
+                        extracted_data[field] = all_matches[0]
+                        if len(all_matches) > 1:
+                            extracted_data[f'{field}s'] = all_matches
                 elif field == 'material_description':
                     descriptions = []
                     for match in matches:
@@ -230,10 +236,24 @@ class TraditionalExtractor:
                 extracted_data['material_description'] = "; ".join(all_materials)
                 extracted_data['material_descriptions_list'] = all_materials
             
-            if all_quantities and not extracted_data.get('quantity'):
-                extracted_data['quantity'] = all_quantities[0]
-                if len(all_quantities) > 1:
-                    extracted_data['quantities'] = all_quantities
+            # Handle quantities - merge with existing quantities
+            if all_quantities:
+                existing_quantities = []
+                if extracted_data.get('quantities'):
+                    existing_quantities = extracted_data['quantities']
+                elif extracted_data.get('quantity'):
+                    existing_quantities = [extracted_data['quantity']]
+                
+                # Combine and deduplicate quantities
+                combined_quantities = existing_quantities + all_quantities
+                unique_quantities = []
+                for qty in combined_quantities:
+                    if qty not in unique_quantities:
+                        unique_quantities.append(qty)
+                
+                extracted_data['quantity'] = unique_quantities[0] if unique_quantities else ''
+                if len(unique_quantities) > 1:
+                    extracted_data['quantities'] = unique_quantities
             
             if all_colors and not extracted_data.get('colour_code'):
                 extracted_data['colour_code'] = all_colors[0]
@@ -316,88 +336,55 @@ class TraditionalExtractor:
             return "unknown", 0.5
     
     def extract_order_items(self, text: str) -> List[Dict[str, Any]]:
-        """Extract order items from text"""
+        """Extract order items from text with better quantity matching"""
         items = []
         lines = text.split('\n')
-        current_item = None
         
+        # Enhanced quantity patterns
         quantity_patterns = [
             r'(\d+)\s+(?:stuks?|stuk|pieces?|pcs)\b',
             r'(?:stuks?|stuk|pieces?|pcs)[\s:]*(\d+)',
-            r'(\d+)\s*(?:x\s*)?(?:ltr|litr|liter)',
         ]
         
-        for i, line in enumerate(lines):
+        for line in lines:
             line = line.strip()
             if not line:
                 continue
-                
-            # Look for lines containing PPG or material descriptions
-            if 'PPG' in line or any(keyword in line.upper() for keyword in ['SIGMA', 'RAPID', 'GLOSS', 'PRIMER', 'ALLURE']):
-                # Finish previous item if exists
-                if current_item and current_item.get('description'):
-                    items.append(current_item)
-                
-                # Start new item
-                current_item = {
-                    'code': '',
+            
+            # Look for material lines
+            if any(keyword in line.upper() for keyword in ['PPG', 'SIGMA', 'RAPID', 'GLOSS', 'PRIMER', 'ALLURE', 'KIT', 'LAKVERF', 'GRONDVERF']):
+                item = {
                     'description': line,
                     'quantity': '',
-                    'color': '',
-                    'unit': ''
+                    'material_code': '',
+                    'color': ''
                 }
                 
-                # Extract PPG code
+                # Extract material code
                 ppg_match = re.search(r'(PPG\d+)', line)
                 if ppg_match:
-                    current_item['code'] = ppg_match.group(1)
+                    item['material_code'] = ppg_match.group(1)
                 
-                # Extract quantity from same line
+                # Extract quantity from the same line or nearby lines
+                quantity_found = False
                 for pattern in quantity_patterns:
                     quantity_match = re.search(pattern, line, re.IGNORECASE)
                     if quantity_match:
                         qty = quantity_match.group(1)
                         try:
                             qty_int = int(qty)
-                            if 1 <= qty_int <= 10000:
-                                current_item['quantity'] = qty
-                                unit_match = re.search(r'(stuks?|stuk|pieces?|pcs|ltr|litr)', line, re.IGNORECASE)
-                                if unit_match:
-                                    current_item['unit'] = unit_match.group(1)
+                            if 1 <= qty_int <= 10000:  # Reasonable quantity range
+                                item['quantity'] = qty
+                                quantity_found = True
                                 break
                         except ValueError:
                             continue
                 
-                # Extract color (RAL codes)
-                color_match = re.search(r'(RAL\s*\d+)', line, re.IGNORECASE)
+                # Extract color
+                color_match = re.search(r'(RAL\s*\d+|No\.\s*\d+)', line, re.IGNORECASE)
                 if color_match:
-                    current_item['color'] = color_match.group(1)
-            
-            elif current_item:
-                # Check if line contains additional info for current item
-                if not current_item.get('quantity'):
-                    for pattern in quantity_patterns:
-                        quantity_match = re.search(pattern, line, re.IGNORECASE)
-                        if quantity_match:
-                            qty = quantity_match.group(1)
-                            try:
-                                qty_int = int(qty)
-                                if 1 <= qty_int <= 10000:
-                                    current_item['quantity'] = qty
-                                    unit_match = re.search(r'(stuks?|stuk|pieces?|pcs|ltr|litr)', line, re.IGNORECASE)
-                                    if unit_match:
-                                        current_item['unit'] = unit_match.group(1)
-                                    break
-                            except ValueError:
-                                continue
+                    item['color'] = color_match.group(1)
                 
-                if not current_item.get('color'):
-                    color_match = re.search(r'(RAL\s*\d+)', line, re.IGNORECASE)
-                    if color_match:
-                        current_item['color'] = color_match.group(1)
-        
-        # Add last item if exists
-        if current_item and current_item.get('description'):
-            items.append(current_item)
+                items.append(item)
         
         return items
