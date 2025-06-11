@@ -85,10 +85,29 @@ class EnhancedDataExtractor:
             extracted_data = self.email_processor.enhance_extraction(extracted_data, text)
         
         # Extract order items for orders
-        if doc_type == 'order' and not extracted_data.get('order_items'):
+        if doc_type == 'order':
             order_items = self._extract_order_items(text)
             if order_items:
                 extracted_data['order_items'] = order_items
+                
+                # Extract quantities from order items
+                item_quantities = [item.get('quantity', '') for item in order_items if item.get('quantity')]
+                if item_quantities:
+                    # Update quantities in extracted data
+                    if not extracted_data.get('quantities'):
+                        extracted_data['quantities'] = item_quantities
+                        extracted_data['quantity'] = item_quantities[0]
+                    else:
+                        # Merge with existing quantities
+                        existing_quantities = extracted_data.get('quantities', [])
+                        combined_quantities = existing_quantities + item_quantities
+                        # Remove duplicates while preserving order
+                        unique_quantities = []
+                        for qty in combined_quantities:
+                            if qty and qty not in unique_quantities:
+                                unique_quantities.append(qty)
+                        extracted_data['quantities'] = unique_quantities
+                        extracted_data['quantity'] = unique_quantities[0] if unique_quantities else ''
         
         return extracted_data
     

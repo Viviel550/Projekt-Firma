@@ -98,14 +98,19 @@ class ExcelExporter:
     
     def _get_indexed_value(self, data: Dict[str, Any], single_key: str, multiple_key: str, index: int) -> str:
         """Get value by index from single or multiple values"""
+        # First check if we have multiple values (quantities array)
         if data.get(multiple_key) and isinstance(data[multiple_key], list):
             if index < len(data[multiple_key]):
-                return data[multiple_key][index]
-            elif len(data[multiple_key]) == 1:
-                return data[multiple_key][0]
+                return str(data[multiple_key][index])
+            else:
+                # If index is out of range, return empty string
+                return ""
+        # If we have a single value, show it on ALL rows
         elif data.get(single_key):
-            return data[single_key]
-        return ""
+            return str(data[single_key])
+        # No value found
+        else:
+            return ""
     
     def _apply_formatting(self, writer, df):
         """Apply formatting to Excel worksheet"""
