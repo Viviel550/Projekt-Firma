@@ -165,20 +165,6 @@ Pola, które program stara się wyodrębnić:
 6. Zapisuje wyniki do Excel/JSON
 7. Generuje raport z przetwarzania
 
-## 🧠 Model ML
-
-Program wykorzystuje prosty klasyfikator Naive Bayes do kategoryzacji emaili:
-- **order** - zamówienie
-- **quote** - oferta
-- **delivery** - dostawa
-- **pickup** - odbiór
-- **complaint** - reklamacja
-- **invoice** - faktura
-- **inquiry** - zapytanie
-- **other** - inne
-
-Model można dotrenować wybierając opcję "Trenuj model ML" w menu głównym.
-
 ## 📝 Logi
 
 Logi działania programu są zapisywane w katalogu `logs/extractor.log` i zawierają informacje o:
@@ -202,13 +188,6 @@ Logi działania programu są zapisywane w katalogu `logs/extractor.log` i zawier
 ### Niewystarczająca dokładność ML
 - Dotrenuj model na większej liczbie przykładów
 - Dostosuj `confidence_threshold` w ustawieniach ML
-
-## 🤝 Wsparcie
-
-W przypadku pytań lub problemów, utwórz Issue w repozytorium projektu lub skontaktuj się z autorem:
-
-- Email: support@twojafirma.com
-- Tel: +48 123 456 789
 
 ## 📜 Licencja
 
